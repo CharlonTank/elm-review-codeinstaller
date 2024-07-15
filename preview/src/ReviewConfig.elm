@@ -11,486 +11,368 @@ when inside the directory containing this file.
 
 -}
 
-import Install.ClauseInCase as ClauseInCase
-import Install.FieldInTypeAlias as FieldInTypeAlias
-import Install.Function.InsertFunction as InsertFunction
-import Install.Function.ReplaceFunction as ReplaceFunction
-import Install.Import as Import exposing (module_, qualified, withAlias, withExposedValues)
-import Install.Initializer as Initializer
-import Install.InitializerCmd as InitializerCmd
-import Install.Subscription as Subscription
-import Install.Type
-import Install.TypeVariant as TypeVariant
-import Regex
+import Install.ClauseInCase
+import Install.FieldInTypeAlias
+import Install.Function.InsertFunction
+import Install.Import
+import Install.Initializer
+import Install.TypeVariant
 import Review.Rule exposing (Rule)
 
 
-
-{-
-
-   NOTES.
-
-   1. (FIX FAILED) Install.Initializer: Add cmds Time.now |> Task.perform GotFastTick,
-      MagicLink.Helper.getAtmosphericRandomNumbers to the model
-      (( I failed to apply the automatic fix because it resulted in the same source code. ))
-      See InitializerCmd.makeRule "Backend" "init" below
-      The error is a false positive, but it needs to be fixed.
-
-   2.  Infinite loop: see comments labeled XX.
-
-
--}
-
-config = configMagicLinkMinimal
-
-configAll =
-    configAtmospheric
-        ++ configUsers
-        ++ configAuthTypes
-        ++ configAuthFrontend
-        ++ configAuthBackend
-        ++ configRoute
-        ++ configView
-
-
-configAtmospheric : List Rule
-configAtmospheric =
-    [ -- Add fields randomAtmosphericNumbers and time to BackendModel
-      Import.qualified "Types" [ "Http" ] |> Import.makeRule
-    , Import.qualified "Backend" [ "Atmospheric", "Dict", "Time", "Task", "MagicLink.Helper" ] |> Import.makeRule
-    , FieldInTypeAlias.makeRule "Types"
-        "BackendModel"
-        [ "randomAtmosphericNumbers : Maybe (List Int)"
-        , "time : Time.Posix"
-        ]
-    , TypeVariant.makeRule "Types"
-        "BackendMsg"
-        [ "GotAtmosphericRandomNumbers (Result Http.Error String)"
-        , "SetLocalUuidStuff (List Int)"
-        , "GotFastTick Time.Posix"
+config : List Rule
+config =
+    List.concat
+        [ typesRules
+        , backendRules
+        , frontendRules
+        , envRules
         ]
 
-    --, Initializer.makeRule "Backend"
-    --    "init"
-    --    [ { field = "randomAtmosphericNumbers", value = "Just [ 235880, 700828, 253400, 602641 ]" }
-    --    , { field = "time", value = "Time.millisToPosix 0" }
-    --    ]
-    , InitializerCmd.makeRule "Backend" "init" [ "Time.now |> Task.perform GotFastTick", "MagicLink.Helper.getAtmosphericRandomNumbers" ]
-    , ClauseInCase.init "Backend" "update" "GotAtmosphericRandomNumbers randomNumberString" "Atmospheric.setAtmosphericRandomNumbers model randomNumberString" |> ClauseInCase.makeRule
-    , ClauseInCase.init "Backend" "update" "SetLocalUuidStuff randomInts" "(model, Cmd.none)" |> ClauseInCase.makeRule
-    , ClauseInCase.init "Backend" "update" "GotFastTick time" "( { model | time = time } , Cmd.none )" |> ClauseInCase.makeRule
-    ]
 
-
-configUsers : List Rule
-configUsers =
-    [ Import.qualified "Types" [ "User" ] |> Import.makeRule
-    , Import.config "Types" [ module_ "Dict" |> withExposedValues [ "Dict" ] ] |> Import.makeRule
-    , FieldInTypeAlias.makeRule "Types"
-        "BackendModel"
-        [ "users: Dict.Dict User.EmailString User.User"
-        , "userNameToEmailString : Dict.Dict User.Username User.EmailString"
-        ]
-    , FieldInTypeAlias.makeRule "Types" "LoadedModel" [ "users : Dict.Dict User.EmailString User.User" ]
-    , Import.qualified "Backend" [ "Time", "Task", "LocalUUID" ] |> Import.makeRule
-    , Import.config "Backend"
-        [ module_ "MagicLink.Helper" |> withAlias "Helper"
-        , module_ "Dict" |> withExposedValues [ "Dict" ]
-        ]
-        |> Import.makeRule
-    , Import.qualified "Frontend" [ "Dict" ] |> Import.makeRule
-    , Initializer.makeRule "Frontend" "initLoaded" [ { field = "users", value = "Dict.empty" } ]
-
-    --, Initializer.makeRule "Backend"
-    --    "init"
-    --    [ { field = "userNameToEmailString", value = "Dict.empty" }, { field = "users", value = "Dict.empty" } ]
-    -- XX: enable the below only if you are not using ReplaceFunction.init "Frontend" "tryLoading" tryLoading2
-    -- later on.  If you enable both, you will get an infinite loop.
-    --, ReplaceFunction.init "Frontend" "tryLoading" tryLoading1
-    --    |> ReplaceFunction.makeRule
-    ]
-
-configMagicLinkMinimal : List Rule
-configMagicLinkMinimal =
-    [ Import.qualified "Types" [ "Auth.Common", "MagicLink.Types" ] |> Import.makeRule
-    , TypeVariant.makeRule "Types" "FrontendMsg" [ "AuthFrontendMsg MagicLink.Types.Msg" ]
-    , TypeVariant.makeRule "Types" "BackendMsg" [ "AuthBackendMsg Auth.Common.BackendMsg" ]
-    , TypeVariant.makeRule "Types" "ToBackend"  [ "AuthToBackend Auth.Common.ToBackend" ]
-    , FieldInTypeAlias.makeRule "Types" "LoadedModel" [ "magicLinkModel : MagicLink.Types.Model" ]
-    , Import.qualified "Frontend" [ "MagicLink.Types", "Auth.Common", "MagicLink.Frontend", "MagicLink.Auth", "Pages.SignIn", "Pages.Home", "Pages.Admin", "Pages.TermsOfService", "Pages.Notes" ] |> Import.makeRule
-    , Initializer.makeRule "Frontend" "initLoaded" [ { field = "magicLinkModel", value = "Pages.SignIn.init loadingModel.initUrl" } ]
-    , TypeVariant.makeRule "Types"
-            "ToFrontend"
-            [ "AuthToFrontend Auth.Common.ToFrontend"
-            , "AuthSuccess Auth.Common.UserInfo"
-            , "UserInfoMsg (Maybe Auth.Common.UserInfo)"
-            , "CheckSignInResponse (Result BackendDataStatus User.SignInData)"
-            , "GetLoginTokenRateLimited"
-            , "RegistrationError String"
-            , "SignInError String"
-            , "UserSignedIn (Maybe User.User)"
-            , "UserRegistered User.User"
-            , "GotUserDictionary (Dict.Dict User.EmailString User.User)"
-            , "GotMessage String"
+typesRules : List Rule
+typesRules =
+    [ -- Imports
+      [ Install.Import.init "Types"
+            [ { moduleToImport = "Dict", alias_ = Nothing, exposedValues = Just [ "Dict" ] }
+            , { moduleToImport = "Auth.Common", alias_ = Nothing, exposedValues = Nothing }
+            , { moduleToImport = "Lamdera", alias_ = Nothing, exposedValues = Nothing }
+            , { moduleToImport = "Url", alias_ = Nothing, exposedValues = Just [ "Url" ] }
             ]
-    ]
+            |> Install.Import.makeRule
+      ]
 
+    -- FrontendModel =
+    , List.map (Install.FieldInTypeAlias.makeRule "Types" "FrontendModel")
+        [ "authFlow : Auth.Common.Flow"
+        , "authRedirectBaseUrl : Url"
+        , "login : LoginState"
+        , "currentUser : Maybe UserFrontend"
+        ]
 
+    -- BackendModel =
+    , List.map (Install.FieldInTypeAlias.makeRule "Types" "BackendModel")
+        [ "pendingAuths : Dict Lamdera.SessionId Auth.Common.PendingAuth"
+        , "sessions : Dict Lamdera.SessionId Auth.Common.UserInfo"
+        , "users : Dict Email User"
+        ]
 
-configAuthTypes : List Rule
-configAuthTypes =
-    [ Import.qualified "Types" [ "AssocList", "Auth.Common", "LocalUUID", "MagicLink.Types", "Session" ] |> Import.makeRule
-    , TypeVariant.makeRule "Types"
-        "FrontendMsg"
-        [ "SignInUser User.SignInData"
-        , "AuthFrontendMsg MagicLink.Types.Msg"
-        , "SetRoute_ Route"
-        , "LiftMsg MagicLink.Types.Msg"
+    -- FrontendMsg =
+    , List.map (Install.TypeVariant.makeRule "Types" "FrontendMsg")
+        [ "GoogleSigninRequested"
+        , "Logout"
         ]
-    , TypeVariant.makeRule "Types"
-        "BackendMsg"
-        [ "AuthBackendMsg Auth.Common.BackendMsg"
-        , "AutoLogin SessionId User.SignInData"
-        , "OnConnected SessionId ClientId"
-        ]
-    , FieldInTypeAlias.makeRule "Types"
-        "BackendModel"
-        [ "localUuidData : Maybe LocalUUID.Data"
-        , "pendingAuths : Dict Lamdera.SessionId Auth.Common.PendingAuth"
-        , "pendingEmailAuths : Dict Lamdera.SessionId Auth.Common.PendingEmailAuth"
-        , "sessions : Dict SessionId Auth.Common.UserInfo"
-        , "secretCounter : Int"
-        , "sessionDict : AssocList.Dict SessionId String"
-        , "pendingLogins : MagicLink.Types.PendingLogins"
-        , "log : MagicLink.Types.Log"
-        , "sessionInfo : Session.SessionInfo"
-        ]
-    , TypeVariant.makeRule "Types"
-        "ToBackend"
+
+    -- ToBackend =
+    , List.map (Install.TypeVariant.makeRule "Types" "ToBackend")
         [ "AuthToBackend Auth.Common.ToBackend"
-        , "AddUser String String String"
-        , "RequestSignUp String String String"
-        , "GetUserDictionary"
+        , "GetUserToBackend"
+        , "LoggedOut"
         ]
-    , FieldInTypeAlias.makeRule "Types" "LoadedModel" [ "magicLinkModel : MagicLink.Types.Model" ]
-    ]
 
+    -- BackendMsg =
+    , List.map (Install.TypeVariant.makeRule "Types" "BackendMsg")
+        [ "AuthBackendMsg Auth.Common.BackendMsg"
+        ]
 
-configAuthFrontend : List Rule
-configAuthFrontend =
-    [ Import.qualified "Frontend" [ "MagicLink.Types", "Auth.Common", "MagicLink.Frontend", "MagicLink.Auth", "Pages.SignIn", "Pages.Home", "Pages.Admin", "Pages.TermsOfService", "Pages.Notes" ] |> Import.makeRule
-    , Initializer.makeRule "Frontend" "initLoaded" [ { field = "magicLinkModel", value = "Pages.SignIn.init loadingModel.initUrl" } ]
-    , ClauseInCase.init "Frontend" "updateFromBackendLoaded" "AuthToFrontend authToFrontendMsg" "MagicLink.Auth.updateFromBackend authToFrontendMsg model.magicLinkModel |> Tuple.mapFirst (\\magicLinkModel -> { model | magicLinkModel = magicLinkModel })"
-        |> ClauseInCase.withInsertAtBeginning
-        |> ClauseInCase.makeRule
-    , ClauseInCase.init "Frontend" "updateFromBackendLoaded" "GotUserDictionary users" "( { model | users = users }, Cmd.none )"
-        |> ClauseInCase.withInsertAtBeginning
-        |> ClauseInCase.makeRule
-    , ClauseInCase.init "Frontend" "updateFromBackendLoaded" "UserRegistered user" "MagicLink.Frontend.userRegistered model.magicLinkModel user |> Tuple.mapFirst (\\magicLinkModel -> { model | magicLinkModel = magicLinkModel })"
-        |> ClauseInCase.withInsertAtBeginning
-        |> ClauseInCase.makeRule
-    , ClauseInCase.init "Frontend" "updateFromBackendLoaded" "GotMessage message" "({model | message = message}, Cmd.none)"
-        |> ClauseInCase.withInsertAtBeginning
-        |> ClauseInCase.makeRule
-    , ClauseInCase.init "Frontend" "updateLoaded" "SetRoute_ route" "( { model | route = route }, Cmd.none )" |> ClauseInCase.makeRule
-    , ClauseInCase.init "Frontend" "updateLoaded" "AuthFrontendMsg authToFrontendMsg" "MagicLink.Auth.update authToFrontendMsg model.magicLinkModel |> Tuple.mapFirst (\\magicLinkModel -> { model | magicLinkModel = magicLinkModel })" |> ClauseInCase.makeRule
-    , ClauseInCase.init "Frontend" "updateLoaded" "SignInUser userData" "MagicLink.Frontend.signIn model userData" |> ClauseInCase.makeRule
-    , TypeVariant.makeRule "Types"
-        "ToFrontend"
+    -- ToFrontend =
+    , List.map (Install.TypeVariant.makeRule "Types" "ToFrontend")
         [ "AuthToFrontend Auth.Common.ToFrontend"
         , "AuthSuccess Auth.Common.UserInfo"
         , "UserInfoMsg (Maybe Auth.Common.UserInfo)"
-        , "CheckSignInResponse (Result BackendDataStatus User.SignInData)"
-        , "GetLoginTokenRateLimited"
-        , "RegistrationError String"
-        , "SignInError String"
-        , "UserSignedIn (Maybe User.User)"
-        , "UserRegistered User.User"
-        , "GotUserDictionary (Dict.Dict User.EmailString User.User)"
-        , "GotMessage String"
+        , "UserDataToFrontend UserFrontend"
         ]
-    , Install.Type.makeRule "Types" "BackendDataStatus" [ "Sunny", "LoadedBackendData", "Spell String Int" ]
-    , ClauseInCase.init "Frontend" "updateLoaded" "LiftMsg _" "( model, Cmd.none )" |> ClauseInCase.makeRule
 
-    -- XX, WARNING! Causes infinite loop if ReplaceFunction.init "Frontend" "tryLoading" tryLoading1
-    -- is present
-    , ReplaceFunction.init "Frontend" "tryLoading" tryLoading2
-        |> ReplaceFunction.makeRule
+    -- Other types
+    , [ Install.Function.InsertFunction.init "Types"
+            "LoginState"
+            """type LoginState = JustArrived | NotLogged Bool | LoginTokenSent | LoggedIn Auth.Common.UserInfo"""
+      , Install.Function.InsertFunction.init "Types"
+            "UserFrontend"
+            """type alias UserFrontend = { email : Email }"""
+      , Install.Function.InsertFunction.init
+            "Types"
+            "User"
+            """type alias User =
+    { email : Email }"""
+      , Install.Function.InsertFunction.init
+            "Types"
+            "Email"
+            """type alias Email = String"""
+      ]
+        |> List.map Install.Function.InsertFunction.makeRule
     ]
+        |> List.concat
 
 
-configAuthBackend : List Rule
-configAuthBackend =
-    -- 19 rules
-    [ ClauseInCase.init "Backend" "update" "AuthBackendMsg authMsg" "Auth.Flow.backendUpdate (MagicLink.Auth.backendConfig model) authMsg" |> ClauseInCase.makeRule
-    , ClauseInCase.init "Backend" "update" "AutoLogin sessionId loginData" "( model, Lamdera.sendToFrontend sessionId (AuthToFrontend <| Auth.Common.AuthSignInWithTokenResponse <| Ok <| loginData) )" |> ClauseInCase.makeRule
-    , ClauseInCase.init "Backend" "update" "OnConnected sessionId clientId" "( model, Reconnect.connect model sessionId clientId )" |> ClauseInCase.makeRule
-    , ClauseInCase.init "Backend" "update" "ClientConnected sessionId clientId" "( model, Reconnect.connect model sessionId clientId )" |> ClauseInCase.makeRule
-    , Import.qualified "Backend"
-        [ "AssocList"
-        , "Auth.Common"
-        , "Auth.Flow"
-        , "MagicLink.Auth"
-        , "MagicLink.Backend"
-        , "Reconnect"
-        , "User"
-        ]
-        |> Import.makeRule
-    , Initializer.makeRule "Backend"
-        "init"
-        [ { field = "randomAtmosphericNumbers", value = "Just [ 235880, 700828, 253400, 602641 ]" }
-        , { field = "time", value = "Time.millisToPosix 0" }
-        , { field = "sessions", value = "Dict.empty" }
-        , { field = "userNameToEmailString", value = "Dict.empty" }
-        , { field = "users", value = "Dict.empty" }
-        , { field = "sessionInfo", value = "Dict.empty" }
-        , { field = "pendingAuths", value = "Dict.empty" }
-        , { field = "localUuidData", value = "LocalUUID.initFrom4List [ 235880, 700828, 253400, 602641 ]" }
-        , { field = "pendingEmailAuths", value = "Dict.empty" }
-        , { field = "secretCounter", value = "0" }
-        , { field = "sessionDict", value = "AssocList.empty" }
-        , { field = "pendingLogins", value = "AssocList.empty" }
-        , { field = "log", value = "[]" }
-        ]
-    , ClauseInCase.init "Backend" "updateFromFrontend" "AuthToBackend authMsg" "Auth.Flow.updateFromFrontend (MagicLink.Auth.backendConfig model) clientId sessionId authMsg model" |> ClauseInCase.makeRule
-    , ClauseInCase.init "Backend" "updateFromFrontend" "AddUser realname username email" "MagicLink.Backend.addUser model clientId email realname username" |> ClauseInCase.makeRule
-    , ClauseInCase.init "Backend" "updateFromFrontend" "RequestSignUp realname username email" "MagicLink.Backend.requestSignUp model clientId realname username email" |> ClauseInCase.makeRule
-    , ClauseInCase.init "Backend" "updateFromFrontend" "GetUserDictionary" "( model, Lamdera.sendToFrontend clientId (GotUserDictionary model.users) )" |> ClauseInCase.makeRule
-    , Subscription.makeRule "Backend" [ "Lamdera.onConnect OnConnected" ]
-    ]
-
-
-configRoute : List Rule
-configRoute =
-    [ -- ROUTE
-      TypeVariant.makeRule "Route" "Route" [ "TermsOfServiceRoute", "Notes", "SignInRoute", "AdminRoute" ]
-    , ReplaceFunction.init "Route" "decode" decode |> ReplaceFunction.makeRule
-    , ReplaceFunction.init "Route" "encode" encode |> ReplaceFunction.makeRule
-    ]
-
-
-configView =
-    [ ClauseInCase.init "View.Main" "loadedView" "AdminRoute" adminRoute |> ClauseInCase.makeRule
-    , ClauseInCase.init "View.Main" "loadedView" "TermsOfServiceRoute" "generic model Pages.TermsOfService.view" |> ClauseInCase.makeRule
-    , ClauseInCase.init "View.Main" "loadedView" "Notes" "generic model Pages.Notes.view" |> ClauseInCase.makeRule
-    , ClauseInCase.init "View.Main" "loadedView" "SignInRoute" "generic model (\\model_ -> Pages.SignIn.view Types.LiftMsg model_.magicLinkModel |> Element.map Types.AuthFrontendMsg)" |> ClauseInCase.makeRule
-    , ClauseInCase.init "View.Main" "loadedView" "CounterPageRoute" "generic model (generic model Pages.Counter.view)" |> ClauseInCase.makeRule
-    , InsertFunction.init "View.Main" "generic" generic |> InsertFunction.makeRule
-    , Import.qualified "View.Main" [ "Pages.SignIn", "Pages.Admin", "Pages.TermsOfService", "Pages.Notes", "User" ] |> Import.makeRule
-    , ReplaceFunction.init "View.Main" "headerRow" (asOneLine headerRow) |> ReplaceFunction.makeRule
-    ]
-
-
-
--- VALUES USED IN THE RULES:
-
-
-headerRow =
-    """headerRow model = [ headerView model model.route { window = model.window, isCompact = True }, Pages.SignIn.headerView model.magicLinkModel model.route { window = model.window, isCompact = True } |> Element.map Types.AuthFrontendMsg ]"""
-
-
-adminRoute =
-    "if User.isAdmin model.magicLinkModel.currentUserData then generic model Pages.Admin.view else generic model Pages.Home.view"
-
-
-generic =
-    """generic : Types.LoadedModel -> (Types.LoadedModel -> Element Types.FrontendMsg) -> Element Types.FrontendMsg
-generic model view_ =
-    Element.column
-        [ Element.width Element.fill, Element.height Element.fill ]
-        [ Element.row [ Element.width (Element.px model.window.width), Element.Background.color View.Color.blue ]
-            [ ---
-              Pages.SignIn.headerView model.magicLinkModel
-                model.route
-                { window = model.window, isCompact = True }
-                |> Element.map Types.AuthFrontendMsg
-            , headerView model model.route { window = model.window, isCompact = True }
+backendRules : List Rule
+backendRules =
+    [ -- Imports
+      [ Install.Import.init "Backend"
+            [ { moduleToImport = "Auth.Method.EmailMagicLink", alias_ = Nothing, exposedValues = Nothing }
+            , { moduleToImport = "Auth.Method.OAuthGithub", alias_ = Nothing, exposedValues = Nothing }
+            , { moduleToImport = "Auth.Method.OAuthGoogle", alias_ = Nothing, exposedValues = Nothing }
+            , { moduleToImport = "Auth.Flow", alias_ = Nothing, exposedValues = Nothing }
+            , { moduleToImport = "Auth.Common", alias_ = Nothing, exposedValues = Nothing }
+            , { moduleToImport = "Lamdera", alias_ = Nothing, exposedValues = Nothing }
+            , { moduleToImport = "Env", alias_ = Nothing, exposedValues = Nothing }
+            , { moduleToImport = "Dict", alias_ = Nothing, exposedValues = Just [ "Dict" ] }
+            , { moduleToImport = "Time", alias_ = Nothing, exposedValues = Just [ "Posix" ] }
             ]
-        , Element.column
-            (Element.padding 20
-                :: Element.scrollbarY
-                :: Element.height (Element.px <| model.window.height - 95)
-                :: Theme.contentAttributes
-            )
-            [ view_ model -- |> Element.map Types.AuthFrontendMsg
+            |> Install.Import.makeRule
+      ]
+
+    -- init :
+    , [ Install.Initializer.makeRule "Backend" "init" "pendingAuths" "Dict.empty"
+      , Install.Initializer.makeRule "Backend" "init" "sessions" "Dict.empty"
+      , Install.Initializer.makeRule "Backend" "init" "users" "Dict.empty"
+      ]
+    , [ -- update :
+        Install.ClauseInCase.init "Backend"
+            "update"
+            "AuthBackendMsg authMsg"
+            "Auth.Flow.backendUpdate (backendConfig model) authMsg"
+
+      -- updateFromFrontend :
+      , Install.ClauseInCase.init "Backend"
+            "updateFromFrontend"
+            "AuthToBackend authToBackend"
+            "Auth.Flow.updateFromFrontend (backendConfig model) clientId sessionId authToBackend model"
+      , Install.ClauseInCase.init "Backend"
+            "updateFromFrontend"
+            "GetUserToBackend"
+            """case Dict.get sessionId model.sessions of
+            Just userInfo ->
+                case Dict.get userInfo.email model.users of
+                    Just user ->
+                        ( model, Cmd.batch [ Lamdera.sendToFrontend clientId <| UserInfoMsg <| Just userInfo, Lamdera.sendToFrontend clientId <| UserDataToFrontend <| userToFrontend user ])
+                    Nothing ->
+                        let
+                            user = createUser userInfo
+                            newModel = insertUser userInfo.email user model
+                        in
+                        ( newModel, Cmd.batch [ Lamdera.sendToFrontend clientId <| UserInfoMsg <| Just userInfo, Lamdera.sendToFrontend clientId <| UserDataToFrontend <| userToFrontend user ])
+            Nothing ->
+                ( model, Lamdera.sendToFrontend clientId <| UserInfoMsg Nothing )"""
+      , Install.ClauseInCase.init "Backend"
+            "updateFromFrontend"
+            "LoggedOut"
+            """( { model | sessions = Dict.remove sessionId model.sessions }, Cmd.none )"""
+      ]
+        |> List.map Install.ClauseInCase.makeRule
+
+    -- Other Backend functions
+    , [ Install.Function.InsertFunction.init "Backend" "userToFrontend" """userToFrontend : User -> UserFrontend
+userToFrontend user =
+    { email = user.email }"""
+      , Install.Function.InsertFunction.init "Backend" "insertUser" """insertUser : Email -> User -> BackendModel -> BackendModel
+insertUser email newUser model =
+    { model | users = Dict.insert email newUser model.users }"""
+      , Install.Function.InsertFunction.init "Backend" "createUser" """createUser : Auth.Common.UserInfo -> User
+createUser userInfo =
+    { email = userInfo.email }"""
+      , Install.Function.InsertFunction.init "Backend" "config" """config : Auth.Common.Config FrontendMsg ToBackend BackendMsg ToFrontend FrontendModel BackendModel
+config =
+    { toBackend = AuthToBackend
+    , toFrontend = AuthToFrontend
+    , backendMsg = AuthBackendMsg
+    , sendToFrontend = Lamdera.sendToFrontend
+    , sendToBackend = Lamdera.sendToBackend
+    , renewSession = renewSession
+    , methods = [ Auth.Method.OAuthGoogle.configuration Env.googleAppClientId Env.googleAppClientSecret ] }"""
+      , Install.Function.InsertFunction.init "Backend" "backendConfig" """backendConfig : BackendModel -> Auth.Flow.BackendUpdateConfig FrontendMsg BackendMsg ToFrontend FrontendModel BackendModel
+backendConfig model =
+    { asToFrontend = AuthToFrontend
+    , asBackendMsg = AuthBackendMsg
+    , sendToFrontend = Lamdera.sendToFrontend
+    , backendModel = model
+    , loadMethod = Auth.Flow.methodLoader config.methods
+    , handleAuthSuccess = handleAuthSuccess model
+    , isDev = True
+    , renewSession = renewSession
+    , logout = logout }"""
+      , Install.Function.InsertFunction.init "Backend" "logout" """logout : Lamdera.SessionId -> Lamdera.ClientId -> BackendModel -> ( BackendModel, Cmd msg )
+logout sessionId _ model =
+    ( { model | sessions = model.sessions |> Dict.remove sessionId }, Cmd.none )"""
+      , Install.Function.InsertFunction.init "Backend" "handleAuthSuccess" """handleAuthSuccess : BackendModel -> Lamdera.SessionId -> Lamdera.ClientId -> Auth.Common.UserInfo -> Auth.Common.MethodId -> Maybe Auth.Common.Token -> Time.Posix -> ( BackendModel, Cmd BackendMsg )
+handleAuthSuccess backendModel sessionId clientId userInfo _ _ _ =
+    let
+        sessionsWithOutThisOne : Dict Lamdera.SessionId Auth.Common.UserInfo
+        sessionsWithOutThisOne =
+            Dict.filter (\\_ { email } -> email /= userInfo.email) backendModel.sessions
+        newSessions =
+            Dict.insert sessionId userInfo sessionsWithOutThisOne
+        response =
+            AuthSuccess userInfo
+    in
+    ( { backendModel | sessions = newSessions }, Cmd.batch [ Lamdera.sendToFrontend clientId response ] )"""
+
+      -- renewSession :
+      , Install.Function.InsertFunction.init "Backend" "renewSession" """renewSession : Lamdera.SessionId -> Lamdera.ClientId -> BackendModel -> ( BackendModel, Cmd BackendMsg )
+renewSession _ _ model =
+    ( model, Cmd.none )"""
+      ]
+        |> List.map Install.Function.InsertFunction.makeRule
+    ]
+        |> List.concat
+
+
+frontendRules : List Rule
+frontendRules =
+    [ [ Install.Import.init "Frontend"
+            [ { moduleToImport = "Auth.Method.OAuthGoogle", alias_ = Nothing, exposedValues = Nothing }
+            , { moduleToImport = "Auth.Flow", alias_ = Nothing, exposedValues = Nothing }
+            , { moduleToImport = "Auth.Common", alias_ = Nothing, exposedValues = Nothing }
+            , { moduleToImport = "Html", alias_ = Nothing, exposedValues = Nothing }
+            , { moduleToImport = "Html.Events", alias_ = Just "HE", exposedValues = Nothing }
+            , { moduleToImport = "Browser", alias_ = Nothing, exposedValues = Nothing }
             ]
-        , footer model.route model
+            |> Install.Import.makeRule
+      ]
+    , [ Install.Initializer.makeRule "Frontend" "init" "authFlow" "Auth.Common.Idle"
+      , Install.Initializer.makeRule "Frontend" "init" "authRedirectBaseUrl" "{ url | query = Nothing, fragment = Nothing }"
+      , Install.Initializer.makeRule "Frontend" "init" "login" "JustArrived"
+      , Install.Initializer.makeRule "Frontend" "init" "currentUser" "Nothing"
+      ]
+    , [ -- update :
+        Install.ClauseInCase.init "Frontend"
+            "update"
+            "GoogleSigninRequested"
+            """Auth.Flow.signInRequested "OAuthGoogle" { model | login = NotLogged True } Nothing
+    |> Tuple.mapSecond (AuthToBackend >> Lamdera.sendToBackend)"""
+      , Install.ClauseInCase.init "Frontend"
+            "update"
+            "Logout"
+            """( { model | login = NotLogged False }, Lamdera.sendToBackend LoggedOut )"""
+
+      -- updateFromBackend :
+      , Install.ClauseInCase.init "Frontend"
+            "updateFromBackend"
+            "AuthToFrontend authToFrontendMsg"
+            "authUpdateFromBackend authToFrontendMsg model"
+      , Install.ClauseInCase.init "Frontend"
+            "updateFromBackend"
+            "AuthSuccess userInfo"
+            """( { model | login = LoggedIn userInfo }, Cmd.batch [ Nav.pushUrl model.key "/", Lamdera.sendToBackend GetUserToBackend ] )"""
+      , Install.ClauseInCase.init "Frontend"
+            "updateFromBackend"
+            "UserInfoMsg mUserinfo"
+            """case mUserinfo of
+            Just userInfo ->
+                ( { model | login = LoggedIn userInfo }, Cmd.none )
+
+            Nothing ->
+                ( { model | login = NotLogged False }, Cmd.none )"""
+      , Install.ClauseInCase.init "Frontend"
+            "updateFromBackend"
+            "UserDataToFrontend currentUser"
+            """( { model | currentUser = Just currentUser }, Cmd.none )"""
+      ]
+        |> List.map Install.ClauseInCase.makeRule
+
+    -- Other Frontend functions
+    , [ Install.Function.InsertFunction.init "Frontend"
+            "authUpdateFromBackend"
+            """authUpdateFromBackend : Auth.Common.ToFrontend -> FrontendModel -> ( FrontendModel, Cmd FrontendMsg )
+authUpdateFromBackend authToFrontendMsg model =
+    case authToFrontendMsg of
+        Auth.Common.AuthInitiateSignin url ->
+            Auth.Flow.startProviderSignin url model
+
+        Auth.Common.AuthError err ->
+            Auth.Flow.setError model err
+
+        Auth.Common.AuthSessionChallenge _ ->
+            ( model, Cmd.none )"""
+      , Install.Function.InsertFunction.init "Frontend"
+            "viewWithAuth"
+            """viewWithAuth : Model -> Browser.Document FrontendMsg
+viewWithAuth model =
+    { title = "View Auth Test"
+    , body =
+        [ Html.button
+            [ HE.onClick GoogleSigninRequested ]
+            [ Html.text "Sign in with Google" ]
         ]
-"""
+    }"""
+      , Install.Function.InsertFunction.init "Frontend"
+            "appWithAuth"
+            """{-| replace with your app function to try it out -}
+appWithAuth =
+    Lamdera.frontend
+        { init = initWithAuth
+        , onUrlRequest = UrlClicked
+        , onUrlChange = UrlChanged
+        , update = update
+        , updateFromBackend = updateFromBackend
+        , subscriptions = always Sub.none
+        , view = viewWithAuth
+        }"""
+            |> Install.Function.InsertFunction.withInsertAfter "app"
+      , Install.Function.InsertFunction.init "Frontend"
+            "initWithAuth"
+            """initWithAuth : Url.Url -> Nav.Key -> ( FrontendModel, Cmd FrontendMsg )
+initWithAuth url key =
+    let
+        ( model, cmds ) =
+            init url key
+    in
+    authCallbackCmd model url key
+        |> Tuple.mapSecond (\\cmd -> Cmd.batch [ cmds, cmd, Lamdera.sendToBackend GetUserToBackend ])"""
+      , Install.Function.InsertFunction.init "Frontend"
+            "authCallbackCmd"
+            """authCallbackCmd : FrontendModel -> Url.Url -> Nav.Key -> ( FrontendModel, Cmd FrontendMsg )
+authCallbackCmd model url key =
+    let
+        { path } =
+            url
+    in
+    case path of
+        "/login/OAuthGoogle/callback" ->
+            callbackForGoogleAuth model url key
+
+        _ ->
+            ( model, Cmd.none )"""
+      , Install.Function.InsertFunction.init "Frontend"
+            "callbackForGoogleAuth"
+            """callbackForGoogleAuth : FrontendModel -> Url.Url -> Nav.Key -> ( FrontendModel, Cmd FrontendMsg )
+callbackForGoogleAuth model url key =
+    let
+        ( authM, authCmd ) =
+            Auth.Flow.init model
+                "OAuthGoogle"
+                url
+                key
+                (\\msg -> Lamdera.sendToBackend (AuthToBackend msg))
+    in
+    ( authM, authCmd )"""
+      ]
+        |> List.map Install.Function.InsertFunction.makeRule
+    ]
+        |> List.concat
 
 
-encode =
-    """encode : Route -> String
-encode route =
-    Url.Builder.absolute
-        (case route of
-            HomepageRoute ->
-                []
-
-            CounterPageRoute ->
-                [ "counter" ]
-
-            TermsOfServiceRoute ->
-                [ "terms" ]
-
-            Notes ->
-                [ "notes" ]
-
-            SignInRoute ->
-                [ "signin" ]
-
-            AdminRoute ->
-                [ "admin" ]
-        )
-        (case route of
-            HomepageRoute ->
-                []
-
-            CounterPageRoute ->
-                []
-
-            TermsOfServiceRoute ->
-                []
-
-            Notes ->
-                []
-
-            SignInRoute ->
-                []
-
-            AdminRoute ->
-                []
-        )
-"""
-
-
-decode =
-    """decode : Url -> Route
-decode url =
-    Url.Parser.oneOf
-        [ Url.Parser.top |> Url.Parser.map HomepageRoute
-        , Url.Parser.s "counter" |> Url.Parser.map CounterPageRoute
-        , Url.Parser.s "admin" |> Url.Parser.map AdminRoute
-        , Url.Parser.s "notes" |> Url.Parser.map Notes
-        , Url.Parser.s "signin" |> Url.Parser.map SignInRoute
-        , Url.Parser.s "tos" |> Url.Parser.map TermsOfServiceRoute
-        ]
-        |> (\\a -> Url.Parser.parse a url |> Maybe.withDefault HomepageRoute)
-"""
-
-
-
---configReset : List Rule
---configReset =
---    [ TypeVariant.makeRule "Types" "ToBackend" "CounterReset"
---    , TypeVariant.makeRule "Types" "FrontendMsg" "Reset"
---    , ClauseInCase.init "Frontend" "updateLoaded" "Reset" "( { model | counter = 0 }, sendToBackend CounterReset )"
---        |> ClauseInCase.withInsertAfter "Increment"
---        |> ClauseInCase.makeRule
---    , ClauseInCase.init "Backend" "updateFromFrontend" "CounterReset" "( { model | counter = 0 }, broadcast (CounterNewValue 0 clientId) )" |> ClauseInCase.makeRule
---    , ReplaceFunction.init "Pages.Counter" "view" viewFunction |> ReplaceFunction.makeRule
---    ]
-
-
-viewFunction =
-    """view model =
-    Html.div [ style "padding" "50px" ]
-        [ Html.button [ onClick Increment ] [ text "+" ]
-        , Html.div [ style "padding" "10px" ] [ Html.text (String.fromInt model.counter) ]
-        , Html.button [ onClick Decrement ] [ text "-" ]
-        , Html.div [] [Html.button [ onClick Reset, style "margin-top" "10px"] [ text "Reset" ]]
-        ] |> Element.html   """
-
-
-tryLoading1 =
-    """tryLoading : LoadingModel -> ( FrontendModel, Cmd FrontendMsg )
-tryLoading loadingModel =
-    Maybe.map
-        (\\window ->
-            case loadingModel.route of
-                _ ->
-                    let
-                        authRedirectBaseUrl =
-                            let
-                                initUrl =
-                                    loadingModel.initUrl
-                            in
-                            { initUrl | query = Nothing, fragment = Nothing }
-                    in
-                    ( Loaded
-                        { key = loadingModel.key
-                        , now = loadingModel.now
-                        , counter = 0
-                        , window = window
-                        , showTooltip = False
-                        , users = Dict.empty
-                        , route = loadingModel.route
-                        , message = "Starting up ..."
-                        }
-                    , Cmd.none
-                    )
-        )
-        loadingModel.window
-        |> Maybe.withDefault ( Loading loadingModel, Cmd.none )"""
-
-
-tryLoading2 =
-    """tryLoading : LoadingModel -> ( FrontendModel, Cmd FrontendMsg )
-tryLoading loadingModel =
-    Maybe.map
-        (\\window ->
-            case loadingModel.route of
-                _ ->
-                    let
-                        authRedirectBaseUrl =
-                            let
-                                initUrl =
-                                    loadingModel.initUrl
-                            in
-                            { initUrl | query = Nothing, fragment = Nothing }
-                    in
-                    ( Loaded
-                        { key = loadingModel.key
-                        , now = loadingModel.now
-                        , counter = 0
-                        , window = window
-                        , showTooltip = False
-                        , magicLinkModel = Pages.SignIn.init authRedirectBaseUrl
-                        , route = loadingModel.route
-                        , message = "Starting up ..."
-                        , users = Dict.empty
-                        }
-                    , Cmd.none
-                    )
-        )
-        loadingModel.window
-        |> Maybe.withDefault ( Loading loadingModel, Cmd.none )"""
-
-
-
--- Function to compress runs of spaces to a single space
-
-
-asOneLine : String -> String
-asOneLine str =
-    str
-        |> String.trim
-        |> compressSpaces
-        |> String.split "\n"
-        -- |> List.filter (\s -> s /= "")
-        |> String.join " "
-
-
-compressSpaces : String -> String
-compressSpaces string =
-    userReplace " +" (\_ -> " ") string
-
-
-userReplace : String -> (Regex.Match -> String) -> String -> String
-userReplace userRegex replacer string =
-    case Regex.fromString userRegex of
-        Nothing ->
-            string
-
-        Just regex ->
-            Regex.replace regex replacer string
+envRules : List Rule
+envRules =
+    [ Install.Function.InsertFunction.init "Env"
+        "githubAppClientId"
+        """githubAppClientId : String
+githubAppClientId =
+    \"\""""
+    , Install.Function.InsertFunction.init "Env"
+        "githubAppClientSecret"
+        """githubAppClientSecret : String
+githubAppClientSecret =
+    \"\""""
+    , Install.Function.InsertFunction.init "Env"
+        "googleAppClientId"
+        """googleAppClientId : String
+googleAppClientId =
+    \"\""""
+    , Install.Function.InsertFunction.init "Env"
+        "googleAppClientSecret"
+        """googleAppClientSecret : String
+googleAppClientSecret =
+    \"\""""
+    ]
+        |> List.map Install.Function.InsertFunction.makeRule
