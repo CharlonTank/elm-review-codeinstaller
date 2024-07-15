@@ -14,7 +14,7 @@ when inside the directory containing this file.
 import Install.ClauseInCase
 import Install.FieldInTypeAlias
 import Install.Function.InsertFunction
-import Install.Import
+import Install.Import exposing (module_, withAlias, withExposedValues)
 import Install.Initializer
 import Install.TypeVariant
 import Review.Rule exposing (Rule)
@@ -32,59 +32,64 @@ config =
 
 typesRules : List Rule
 typesRules =
-    [ -- Imports
-      [ Install.Import.init "Types"
-            [ { moduleToImport = "Dict", alias_ = Nothing, exposedValues = Just [ "Dict" ] }
-            , { moduleToImport = "Auth.Common", alias_ = Nothing, exposedValues = Nothing }
-            , { moduleToImport = "Lamdera", alias_ = Nothing, exposedValues = Nothing }
-            , { moduleToImport = "Url", alias_ = Nothing, exposedValues = Just [ "Url" ] }
+    [ [ -- Imports
+        Install.Import.config "Types"
+            [ module_ "Dict" |> withExposedValues [ "Dict" ]
+            , module_ "Auth.Common"
+            , module_ "Lamdera"
+            , module_ "Url" |> withExposedValues [ "Url" ]
             ]
             |> Install.Import.makeRule
+
+      -- FrontendModel =
+      , Install.FieldInTypeAlias.makeRule "Types"
+            "FrontendModel"
+            [ "authFlow : Auth.Common.Flow"
+            , "authRedirectBaseUrl : Url"
+            , "login : LoginState"
+            , "currentUser : Maybe UserFrontend"
+            ]
+
+      -- BackendModel =
+      , Install.FieldInTypeAlias.makeRule "Types"
+            "BackendModel"
+            [ "pendingAuths : Dict Lamdera.SessionId Auth.Common.PendingAuth"
+            , "sessions : Dict Lamdera.SessionId Auth.Common.UserInfo"
+            , "users : Dict Email User"
+            ]
+
+      -- FrontendMsg =
+      , Install.TypeVariant.makeRule "Types"
+            "FrontendMsg"
+            [ "GoogleSigninRequested"
+            , "Logout"
+            ]
+
+      -- ToBackend =
+      , Install.TypeVariant.makeRule "Types"
+            "ToBackend"
+            [ "AuthToBackend Auth.Common.ToBackend"
+            , "GetUserToBackend"
+            , "LoggedOut"
+            ]
+
+      -- BackendMsg =
+      , Install.TypeVariant.makeRule "Types"
+            "BackendMsg"
+            [ "AuthBackendMsg Auth.Common.BackendMsg"
+            ]
+
+      -- ToFrontend =
+      , Install.TypeVariant.makeRule "Types"
+            "ToFrontend"
+            [ "AuthToFrontend Auth.Common.ToFrontend"
+            , "AuthSuccess Auth.Common.UserInfo"
+            , "UserInfoMsg (Maybe Auth.Common.UserInfo)"
+            , "UserDataToFrontend UserFrontend"
+            ]
       ]
-
-    -- FrontendModel =
-    , List.map (Install.FieldInTypeAlias.makeRule "Types" "FrontendModel")
-        [ "authFlow : Auth.Common.Flow"
-        , "authRedirectBaseUrl : Url"
-        , "login : LoginState"
-        , "currentUser : Maybe UserFrontend"
-        ]
-
-    -- BackendModel =
-    , List.map (Install.FieldInTypeAlias.makeRule "Types" "BackendModel")
-        [ "pendingAuths : Dict Lamdera.SessionId Auth.Common.PendingAuth"
-        , "sessions : Dict Lamdera.SessionId Auth.Common.UserInfo"
-        , "users : Dict Email User"
-        ]
-
-    -- FrontendMsg =
-    , List.map (Install.TypeVariant.makeRule "Types" "FrontendMsg")
-        [ "GoogleSigninRequested"
-        , "Logout"
-        ]
-
-    -- ToBackend =
-    , List.map (Install.TypeVariant.makeRule "Types" "ToBackend")
-        [ "AuthToBackend Auth.Common.ToBackend"
-        , "GetUserToBackend"
-        , "LoggedOut"
-        ]
-
-    -- BackendMsg =
-    , List.map (Install.TypeVariant.makeRule "Types" "BackendMsg")
-        [ "AuthBackendMsg Auth.Common.BackendMsg"
-        ]
-
-    -- ToFrontend =
-    , List.map (Install.TypeVariant.makeRule "Types" "ToFrontend")
-        [ "AuthToFrontend Auth.Common.ToFrontend"
-        , "AuthSuccess Auth.Common.UserInfo"
-        , "UserInfoMsg (Maybe Auth.Common.UserInfo)"
-        , "UserDataToFrontend UserFrontend"
-        ]
-
-    -- Other types
-    , [ Install.Function.InsertFunction.init "Types"
+    , -- Other types
+      [ Install.Function.InsertFunction.init "Types"
             "LoginState"
             """type LoginState = JustArrived | NotLogged Bool | LoginTokenSent | LoggedIn Auth.Common.UserInfo"""
       , Install.Function.InsertFunction.init "Types"
@@ -108,24 +113,27 @@ typesRules =
 backendRules : List Rule
 backendRules =
     [ -- Imports
-      [ Install.Import.init "Backend"
-            [ { moduleToImport = "Auth.Method.EmailMagicLink", alias_ = Nothing, exposedValues = Nothing }
-            , { moduleToImport = "Auth.Method.OAuthGithub", alias_ = Nothing, exposedValues = Nothing }
-            , { moduleToImport = "Auth.Method.OAuthGoogle", alias_ = Nothing, exposedValues = Nothing }
-            , { moduleToImport = "Auth.Flow", alias_ = Nothing, exposedValues = Nothing }
-            , { moduleToImport = "Auth.Common", alias_ = Nothing, exposedValues = Nothing }
-            , { moduleToImport = "Lamdera", alias_ = Nothing, exposedValues = Nothing }
-            , { moduleToImport = "Env", alias_ = Nothing, exposedValues = Nothing }
-            , { moduleToImport = "Dict", alias_ = Nothing, exposedValues = Just [ "Dict" ] }
-            , { moduleToImport = "Time", alias_ = Nothing, exposedValues = Just [ "Posix" ] }
+      [ Install.Import.config "Backend"
+            [ module_ "Auth.Method.EmailMagicLink"
+            , module_ "Auth.Method.OAuthGithub"
+            , module_ "Auth.Method.OAuthGoogle"
+            , module_ "Auth.Flow"
+            , module_ "Auth.Common"
+            , module_ "Lamdera"
+            , module_ "Env"
+            , module_ "Dict" |> withExposedValues [ "Dict" ]
+            , module_ "Time" |> withExposedValues [ "Posix" ]
             ]
             |> Install.Import.makeRule
       ]
 
     -- init :
-    , [ Install.Initializer.makeRule "Backend" "init" "pendingAuths" "Dict.empty"
-      , Install.Initializer.makeRule "Backend" "init" "sessions" "Dict.empty"
-      , Install.Initializer.makeRule "Backend" "init" "users" "Dict.empty"
+    , [ Install.Initializer.makeRule "Backend"
+            "init"
+            [ { field = "pendingAuths", value = "Dict.empty" }
+            , { field = "sessions", value = "Dict.empty" }
+            , { field = "users", value = "Dict.empty" }
+            ]
       ]
     , [ -- update :
         Install.ClauseInCase.init "Backend"
@@ -219,20 +227,24 @@ renewSession _ _ model =
 
 frontendRules : List Rule
 frontendRules =
-    [ [ Install.Import.init "Frontend"
-            [ { moduleToImport = "Auth.Method.OAuthGoogle", alias_ = Nothing, exposedValues = Nothing }
-            , { moduleToImport = "Auth.Flow", alias_ = Nothing, exposedValues = Nothing }
-            , { moduleToImport = "Auth.Common", alias_ = Nothing, exposedValues = Nothing }
-            , { moduleToImport = "Html", alias_ = Nothing, exposedValues = Nothing }
-            , { moduleToImport = "Html.Events", alias_ = Just "HE", exposedValues = Nothing }
-            , { moduleToImport = "Browser", alias_ = Nothing, exposedValues = Nothing }
+    [ [ Install.Import.config "Frontend"
+            [ module_ "Auth.Method.OAuthGoogle"
+            , module_ "Auth.Flow"
+            , module_ "Auth.Common"
+            , module_ "Html"
+            , module_ "Html.Events" |> withAlias "HE"
+            , module_ "Browser"
             ]
             |> Install.Import.makeRule
       ]
-    , [ Install.Initializer.makeRule "Frontend" "init" "authFlow" "Auth.Common.Idle"
-      , Install.Initializer.makeRule "Frontend" "init" "authRedirectBaseUrl" "{ url | query = Nothing, fragment = Nothing }"
-      , Install.Initializer.makeRule "Frontend" "init" "login" "JustArrived"
-      , Install.Initializer.makeRule "Frontend" "init" "currentUser" "Nothing"
+    , [ -- init :
+        Install.Initializer.makeRule "Frontend"
+            "init"
+            [ { field = "authFlow", value = "Auth.Common.Idle" }
+            , { field = "authRedirectBaseUrl", value = "{ url | query = Nothing, fragment = Nothing }" }
+            , { field = "login", value = "JustArrived" }
+            , { field = "currentUser", value = "Nothing" }
+            ]
       ]
     , [ -- update :
         Install.ClauseInCase.init "Frontend"
