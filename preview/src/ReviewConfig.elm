@@ -227,7 +227,8 @@ renewSession _ _ model =
 
 frontendRules : List Rule
 frontendRules =
-    [ [ Install.Import.config "Frontend"
+    [ -- Imports
+      [ Install.Import.config "Frontend"
             [ module_ "Auth.Method.OAuthGoogle"
             , module_ "Auth.Flow"
             , module_ "Auth.Common"
@@ -241,9 +242,6 @@ frontendRules =
         Install.Initializer.makeRule "Frontend"
             "init"
             [ { field = "authFlow", value = "Auth.Common.Idle" }
-            , { field = "authRedirectBaseUrl", value = "{ url | query = Nothing, fragment = Nothing }" }
-            , { field = "login", value = "JustArrived" }
-            , { field = "currentUser", value = "Nothing" }
             ]
       ]
     , [ -- update :
