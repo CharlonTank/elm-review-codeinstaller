@@ -242,6 +242,9 @@ frontendRules =
         Install.Initializer.makeRule "Frontend"
             "init"
             [ { field = "authFlow", value = "Auth.Common.Idle" }
+            , { field = "authRedirectBaseUrl", value = "Url.fromString \"http://localhost:8000/login/\"" }
+            , { field = "login", value = "NotLogged False" }
+            , { field = "currentUser", value = "Nothing" }
             ]
       ]
     , [ -- update :
